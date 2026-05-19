@@ -1,0 +1,3 @@
+[submodule "10_Pi/WiringPi"]
+	path = 10_Pi/WiringPi
+	url = https://github.com/WiringPi/WiringPi
