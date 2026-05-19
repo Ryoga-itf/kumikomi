@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
         .os_tag = .linux,
         .abi = .gnueabihf,
     });
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSmall });
 
     const wiringpi_src = b.path("WiringPi/wiringPi/");
     const wiringpi = b.addLibrary(.{
