@@ -20,6 +20,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (c.wiringPiSetup() == -1) {
+        std.debug.print("Error: setup failed.\n", .{});
         return error.SetupError;
     }
 

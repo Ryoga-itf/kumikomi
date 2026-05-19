@@ -64,4 +64,22 @@ pub fn build(b: *std.Build) void {
     });
     ledtest_exe.root_module.linkLibrary(wiringpi);
     b.installArtifact(ledtest_exe);
+
+    const swtest_exe = b.addExecutable(.{
+        .name = "swtest",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/swtest.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{
+                    .name = "c",
+                    .module = c.createModule(),
+                },
+            },
+        }),
+    });
+    swtest_exe.root_module.linkLibrary(wiringpi);
+    b.installArtifact(swtest_exe);
 }
