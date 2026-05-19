@@ -82,4 +82,22 @@ pub fn build(b: *std.Build) void {
     });
     swtest_exe.root_module.linkLibrary(wiringpi);
     b.installArtifact(swtest_exe);
+
+    const ds1631test_exe = b.addExecutable(.{
+        .name = "ds1631test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ds1631test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{
+                    .name = "c",
+                    .module = c.createModule(),
+                },
+            },
+        }),
+    });
+    ds1631test_exe.root_module.linkLibrary(wiringpi);
+    b.installArtifact(ds1631test_exe);
 }
