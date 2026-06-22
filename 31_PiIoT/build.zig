@@ -47,6 +47,12 @@ pub fn build(b: *std.Build) void {
     });
     c.addIncludePath(wiringpi_src);
 
+    const zap = b.dependency("zap", .{
+        .target = target,
+        .optimize = optimize,
+        .openssl = false, // set to true to enable TLS support
+    });
+
     const kumikomi_iot_exe = b.addExecutable(.{
         .name = "kumikomi",
         .root_module = b.createModule(.{
@@ -63,5 +69,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     kumikomi_iot_exe.root_module.linkLibrary(wiringpi);
+    kumikomi_iot_exe.root_module.addImport("zap", zap.module("zap"));
     b.installArtifact(kumikomi_iot_exe);
 }
