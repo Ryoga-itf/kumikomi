@@ -102,3 +102,188 @@ CプログラムではwiringPiを利用し、指定されたLEDに対応するGP
 動作確認の様子を示す。
 @fig1 はアプリを起動した直後の様子であり、すべての LED がオフであることが確認できる。
 @fig2 はアプリを操作し、すべての LED を点灯した様子である。@fig3 は @fig2 を横から撮影したものである。
+
+= システムの発展
+
+テキストに記載されているシステムでは、Raspberry Pi上のApache2がHTTPリクエストを受け取り、PHPプログラムからSSHを用いてRaspberry Pi自身へ接続し、LED制御用のCプログラムを実行していた。
+しかし、この構成ではApache2、PHP、SSH、外部コマンドという複数の要素を経由するため、処理経路が複雑である。
+また、SSHのユーザ名とパスワードをPHPソースコード内に記述していることや、HTTP GETパラメータを文字列として外部コマンドへ渡していることから、安全性にも問題がある。
+
+そこで発展として、ZigとHTTPサーバライブラリZapを用いた、LED制御専用のWebサーバを実装した。
+新しいプログラムはRaspberry Pi上の3000番ポートでHTTPリクエストを待ち受け、`/on?num=1` または `/off?num=1` のような要求を受信する。
+URLのパスから点灯または消灯を判定し、`num` パラメータを整数として解析した後、LED番号が0以上5未満であることを確認する。
+入力が不正な場合はHTTPステータス400または404を返し、正しい場合のみ wiringPi の `digitalWrite` を直接呼び出してGPIOを制御する。
+
+この変更により、PHP、SSH、パスワード、sudoを伴う外部コマンド実行が不要となり、Androidアプリから受信した値をZigプログラム内で検証してからGPIOを操作できるようになった。
+また、文字列をシェルコマンドとして実行しないため、OSコマンドインジェクションの危険性を低減できる。
+システム構成も「Androidアプリ、Zig製HTTPサーバ、wiringPi、GPIO、LED」という単純なものになり、処理の流れを把握しやすくなった。
+
+ビルドにはZigのクロスコンパイル機能を利用し、開発環境上でRaspberry Pi向けの32ビットARM Linuxのシングルバイナリを生成した。
+ターゲットにはarm-linux-gnueabihfを指定し、Raspberry Pi上で動作する実行ファイルを作成している。
+Raspberry Piには SCP コマンドを用いて実行バイナリを転送している。
+
+また、GPIO制御に使用するwiringPiについては、Raspberry Piにインストールされた共有ライブラリを動的に参照するのではなく、wiringPiのCソースコードをZigのビルド処理に組み込んだ。
+build.zigではwiringPiを静的ライブラリとしてコンパイルし、生成されるZigの実行ファイルへ静的リンクしている。
+これにより、実行環境に特定のwiringPi共有ライブラリが存在することへの依存を減らし、使用するwiringPiの実装をプロジェクト側で固定できる。
+
+ZigからwiringPiを利用するため、CヘッダはTranslateCによってZigのモジュールへ変換している。
+これにより、既存のCライブラリであるwiringPiを再利用しながら、HTTPサーバ、入力値の解析、エラー処理などの主要部分をZigで実装した。
+さらに、最適化モードにはReleaseSmallを指定し、組込み機器上での利用を意識して実行ファイルのサイズを抑えている。
+
+以下に `main.zig` およびビルドに用いた `build.zig` を示す。
+
+#sourcecode[```zig
+const std = @import("std");
+const zap = @import("zap");
+const c = @import("c");
+
+const led_pins = [_]c_int{ 12, 13, 14, 11, 10 };
+
+pub fn main() !void {
+    if (c.wiringPiSetup() == -1) {
+        std.debug.print("Error: setup failed.\n", .{});
+        return error.SetupError;
+    }
+    inline for (led_pins) |pin| {
+        c.pinMode(pin, c.OUTPUT);
+        c.digitalWrite(pin, c.LOW);
+    }
+
+    var listener = zap.HttpListener.init(.{
+        .port = 3000,
+        .on_request = onRequest,
+        .log = true,
+    });
+    try listener.listen();
+
+    std.debug.print(
+        \\Listening on 0.0.0.0:3000
+        \\
+        \\Examples:
+        \\  http://127.0.0.1:3000/on?num=1
+        \\  http://127.0.0.1:3000/off?num=1
+        \\
+    , .{});
+
+    zap.start(.{
+        .threads = 2,
+        .workers = 1, // mutex
+    });
+}
+
+fn onRequest(r: zap.Request) !void {
+    const path = r.path orelse {
+        r.sendBody("error") catch {};
+        return;
+    };
+
+    const value: c_int = if (std.mem.eql(u8, path, "/on"))
+        c.HIGH
+    else if (std.mem.eql(u8, path, "/off"))
+        c.LOW
+    else {
+        r.setStatusNumeric(404);
+        r.sendBody("error") catch {};
+        return;
+    };
+
+    const num_text = r.getParamSlice("num") orelse {
+        r.setStatusNumeric(400);
+        r.sendBody("error") catch {};
+        return;
+    };
+
+    const led_num = std.fmt.parseInt(usize, num_text, 10) catch {
+        r.setStatusNumeric(400);
+        r.sendBody("error") catch {};
+        return;
+    };
+
+    if (led_num >= led_pins.len) {
+        r.setStatusNumeric(400);
+        r.sendBody("error") catch {};
+        return;
+    }
+
+    c.digitalWrite(led_pins[led_num], value);
+
+    r.sendBody("ok") catch {};
+}
+```]
+
+#sourcecode[```zig
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.resolveTargetQuery(.{
+        .cpu_arch = .arm,
+        .os_tag = .linux,
+        .abi = .gnueabihf,
+    });
+    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSmall });
+
+    const wiringpi_src = b.path("WiringPi/wiringPi/");
+    const wiringpi = b.addLibrary(.{
+        .name = "wiringPi",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    wiringpi.root_module.addIncludePath(wiringpi_src);
+    wiringpi.root_module.addCSourceFiles(.{
+        .root = wiringpi_src,
+        .files = &.{
+            "wiringPi.c",
+            "wiringSerial.c",
+            "wiringShift.c",
+            "piHiPri.c",
+            "piThread.c",
+            "wiringPiSPI.c",
+            "wiringPiI2C.c",
+            "softPwm.c",
+            "softTone.c",
+            "pseudoPins.c",
+            "wpiExtensions.c",
+            "wiringPiLegacy.c",
+        },
+        .flags = &.{
+            "-D_GNU_SOURCE",
+        },
+    });
+
+    const c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    c.addIncludePath(wiringpi_src);
+
+    const zap = b.dependency("zap", .{
+        .target = target,
+        .optimize = optimize,
+        .openssl = false, // set to true to enable TLS support
+    });
+
+    const kumikomi_iot_exe = b.addExecutable(.{
+        .name = "kumikomi",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{
+                    .name = "c",
+                    .module = c.createModule(),
+                },
+            },
+        }),
+    });
+    kumikomi_iot_exe.root_module.linkLibrary(wiringpi);
+    kumikomi_iot_exe.root_module.addImport("zap", zap.module("zap"));
+    b.installArtifact(kumikomi_iot_exe);
+}
+```]
