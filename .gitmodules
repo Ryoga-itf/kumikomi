@@ -1,3 +1,3 @@
-[submodule "10_Pi/WiringPi"]
-	path = 10_Pi/WiringPi
+[submodule "00_ThirdParty/WiringPi"]
+	path = 00_ThirdParty/WiringPi
 	url = https://github.com/WiringPi/WiringPi

@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     });
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSmall });
 
-    const wiringpi_src = b.path("WiringPi/wiringPi/");
+    const wiringpi_src = b.path("../00_ThirdParty/WiringPi/wiringPi/");
     const wiringpi = b.addLibrary(.{
         .name = "wiringPi",
         .linkage = .static,
