@@ -4,8 +4,6 @@ const c = @import("c");
 
 const led_pins = [_]c_int{ 12, 13, 14, 11, 10 };
 
-var gpio_mutex: std.Thread.Mutex = .{};
-
 pub fn main() !void {
     if (c.wiringPiSetup() == -1) {
         std.debug.print("Error: setup failed.\n", .{});
